@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: prometheus-remote-storage-adapter
+metadata:
+  name: prometheus-remote-storage-adapter
+  labels:
+    app: prometheus-remote-storage-adapter
+  annotations:
+    description: Prometheus Remote Storage Adapter
+objects:
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      app: prometheus-remote-storage-adapter
+    name: prometheus-remote-storage-adapter
+  spec:
+    replicas: 1
+    selector:
+      app: prometheus-remote-storage-adapter
+      deploymentconfig: prometheus-remote-storage-adapter
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          app: prometheus-remote-storage-adapter
+          deploymentconfig: prometheus-remote-storage-adapter
+      spec:
+        containers:
+        - image: aicoe/prometheus-remote-storage-adapter
+          imagePullPolicy: IfNotPresent
+          name: prometheus-remote-storage-adapter
+          ports:
+          - containerPort: 9201
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+    test: false
+    triggers:
+    - type: ConfigChange
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      app: prometheus-remote-storage-adapter
+    name: prometheus-remote-storage-adapter
+  spec:
+    ports:
+    - name: 9201-tcp
+      port: 9201
+      protocol: TCP
+      targetPort: 9201
+    selector:
+      app: prometheus-remote-storage-adapter
+      deploymentconfig: prometheus-remote-storage-adapter
+    sessionAffinity: None
+    type: ClusterIP
