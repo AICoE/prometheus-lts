@@ -16,4 +16,5 @@ make init
 make deploy_influx
 make deploy_prometheus
 make deploy_storage_adapter
+make deploy_grafana
 ```
