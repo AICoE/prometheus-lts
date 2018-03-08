@@ -43,6 +43,11 @@ objects:
           ports:
           - containerPort: 9201
             protocol: TCP
+          env:
+          - name: INFLUXDB_URL
+            value: http://influxdb:8086/
+          - name: INFLUXDB_DATABASE
+            value: prometheus
           resources: {}
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
