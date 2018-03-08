@@ -28,4 +28,7 @@ deploy_storage_adapter:
 deploy_prometheus:
 	oc new-app -f ./prometheus.yaml -p NAMESPACE=${PROJECT}
 
+deploy_grafana:
+	bash ./setup-grafana.sh -n prometheus -p aiops  # add -a for oauth, -e for node exporter
+
 init: create_project add_influx_image
