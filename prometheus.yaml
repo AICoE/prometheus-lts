@@ -174,19 +174,28 @@ objects:
       # well as HA API server deployments.
       scrape_configs:
       - job_name: 'prometheus'
-        # Override the global default and scrape targets from this job every 5 seconds.
-        scrape_interval: 5s
+        scrape_interval: 1m
         static_configs:
           - targets: ['localhost:9090']
-      - job_name: 'remote-storage-adapter'
-        # Override the global default and scrape targets from this job every 5 seconds.
-        scrape_interval: 5s
+      - job_name: 'influx'
+        scrape_interval: 1m
         static_configs:
-          - targets: ['prometheus-remote-storage-adapter:9201']
-
-      # Remote write configuration (for Graphite, OpenTSDB, or InfluxDB).
+          - targets: ['influxdb:8086']
+      - job_name: 'kafka'
+        scrape_interval: 1m
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+              - 'dh-stage-message-bus'
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: kafkametrics.*
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
       remote_write:
-        - url: "http://prometheus-remote-storage-adapter:9201/write"
-      # Remote read configuration (for InfluxDB only at the moment).
+        - url: "http://influxdb:8086/api/v1/prom/write?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"
       remote_read:
-        - url: "http://prometheus-remote-storage-adapter:9201/read"
+        - url: "http://influxdb:8086/api/v1/prom/read?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"

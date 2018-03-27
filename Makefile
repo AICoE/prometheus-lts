@@ -1,34 +1,25 @@
-include .env
-export $(shell sed 's/=.*//' .env)
+PROJECT=aiops-dev-prometheus-lts
+INFLUXDB_STORAGE=50Gi
 
-PROJECT=prometheus-lts
-INFLUXDB_STORAGE=10Gi
+.PHONY: all init
 
-.PHONY: all init delete_sso add_influx_image deploy_influx deploy_storage_adapter deploy_prometheus
+init: create_project
 
 create_project:
 	oc new-project ${PROJECT}
 
-delete_sso:
-	oc delete secret connect-sso
-	oc delete secret connect
-
-add_influx_image:
-	oc secrets new-dockercfg connect-sso --docker-server=sso.redhat.com --docker-username="${USERNAME}" --docker-password="${PASSWORD}" --docker-email="${EMAIL}" && \
-    oc secrets new-dockercfg connect --docker-server="https://registry.connect.redhat.com" --docker-username="${USERNAME}" --docker-password="${PASSWORD}" --docker-email="${EMAIL}" && \
-    oc secret link default secret/connect --for=pull && \
-    oc import-image influxdb --from=registry.connect.redhat.com/influxdata/influxdb-1x --confirm
-
 deploy_influx:
-	oc new-app -p STORAGE_SIZE="${INFLUXDB_STORAGE}" -l app=influxdb -f ./influxdb.yaml
+	oc new-app -p STORAGE_SIZE="${INFLUXDB_STORAGE}" -l app=influxdb -f ./influxdb.yaml -n ${PROJECT}
 
-deploy_storage_adapter:
-	oc new-app -l app=prometheus-remote-storage-adapter -f ./prometheus-remote-storage-adapter.yaml
+delete_influx:
+	oc delete all,secret -l app=influxdb -n ${PROJECT}
 
 deploy_prometheus:
-	oc new-app -f ./prometheus.yaml -p NAMESPACE=${PROJECT}
+	oc new-app -f ./prometheus.yaml -p NAMESPACE=${PROJECT} -l app=prometheus -n ${PROJECT}
 
-deploy_grafana:
-	bash ./setup-grafana.sh -n prometheus -p aiops  # add -a for oauth, -e for node exporter
+delete_prometheus:
+	oc delete all,secret,sa,configmaps -l app=prometheus -n ${PROJECT}
+	oc delete sa/prometheus-reader sa/deployer sa/builder -n ${PROJECT}
 
-init: create_project add_influx_image
+#deploy_grafana:
+#	bash ./setup-grafana.sh -n prometheus -p aiops  # add -a for oauth, -e for node exporter

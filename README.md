@@ -1,20 +1,17 @@
 # Prometheus Long Term Storage
 
-## Red Hat Container catalog
+Create the project with `make init`
 
-Due to an issue with the container catalog, we need to connect our sso credentials
-```
-cp .env.example .env
-```
-Then add your Red Hat Access ( https://access.redhat.com/ ) credentials to `.env` 
+## Influx
 
-## deploy
+Deploy influxdb with `make deploy_influx`
 
-```
-# creates project and imports influx images
-make init
-make deploy_influx
-make deploy_prometheus
-make deploy_storage_adapter
-make deploy_grafana
-```
+## Prometheus
+
+Get the influxdb password for the admin user with
+
+`oc get secrets/admin-password -n aiops-prod-prometheus-lts -o jsonpath --template '{.data.admin_password}' | base64 --decode`
+
+and replace {INFLUX_ADMIN_PASSWORD} in `prometheus.yaml`. 
+
+Deploy prometheus with `make deploy_prometheus`

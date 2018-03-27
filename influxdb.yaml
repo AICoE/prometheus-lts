@@ -6,17 +6,32 @@ parameters:
 - name: STORAGE_SIZE
   value: 10Gi
   description: The size of the persistent storage for Influxdb
+- description: The admin password
+  name: ADMIN_PASSWORD
+  generate: expression
+  from: "[a-zA-Z0-9]{43}"
 objects:
 - apiVersion: v1
   kind: PersistentVolumeClaim
   metadata:
     name: influxdb-data
+    labels:
+      app: influxdb
   spec:
+    storageClassName: ceph-dyn-datahub
     accessModes:
       - ReadWriteOnce
     resources:
       requests:
         storage: ${STORAGE_SIZE}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: admin-password
+    labels:
+      app: influxdb
+  stringData:
+    admin_password: "${ADMIN_PASSWORD}"
 - apiVersion: v1
   kind: Service
   metadata:
@@ -67,21 +82,13 @@ objects:
     strategy:
       activeDeadlineSeconds: 21600
       resources: {}
-      type: Rolling
+      type: Recreate
       rollingParams:
         intervalSeconds: 1
         maxSurge: 25%
         maxUnavailable: 25%
         timeoutSeconds: 600
         updatePeriodSeconds: 1
-        post:
-          failurePolicy: Abort
-          execNewPod:
-             containerName: influxdb
-             command:
-             - /bin/sh
-             - -c
-             - sleep 5 && influx -host influxdb -execute 'show databases; create database prometheus; show databases;'
     template:
       metadata:
         creationTimestamp: null
@@ -89,13 +96,35 @@ objects:
           app: influxdb
       spec:
         containers:
-        - image: registry.connect.redhat.com/influxdata/influxdb-1x@sha256:91b145170df87e189c2f2c9d9983fe6128bee3922dc30438173ea05c210525af
+        - image: influxdb
+          env:
+            - name: INFLUXDB_DB
+              value: 'prometheus'
+            - name: INFLUXDB_HTTP_AUTH_ENABLED
+              value: 'true'
+            - name: INFLUXDB_ADMIN_USER
+              value: 'admin'
+            - name: INFLUXDB_ADMIN_PASSWORD
+              value: "${ADMIN_PASSWORD}"
+            - name: INFLUXDB_DATA_INDEX_VERSION
+              value: "tsi1"
+            - name: INFLUXDB_DATA_MAX_SERIES_PER_DATABASE
+              value: '0'
+            - name: INFLUXDB_DATA_MAX_VALUES_PER_TAG
+              value: '0'
           imagePullPolicy: Always
           name: influxdb
+          tag: 1.5.1
           ports:
           - containerPort: 8086
             protocol: TCP
-          resources: {}
+          resources:
+            limits:
+              cpu: '4'
+              memory: 32Gi
+            requests:
+              cpu: '2'
+              memory: 8Gi
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
           volumeMounts:
