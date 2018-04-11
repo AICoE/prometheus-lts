@@ -18,8 +18,8 @@ deploy_prometheus:
 	oc new-app -f ./prometheus.yaml -p NAMESPACE=${PROJECT} -l app=prometheus -n ${PROJECT}
 
 delete_prometheus:
-	oc delete all,secret,sa,configmaps -l app=prometheus -n ${PROJECT}
-	oc delete sa/prometheus-reader sa/deployer sa/builder -n ${PROJECT}
+#	oc delete all,secret,sa,configmaps,rolebindings -l app=prometheus -n ${PROJECT}
+	oc delete all -l app=prometheus -n ${PROJECT}
 
 #deploy_grafana:
 #	bash ./setup-grafana.sh -n prometheus -p aiops  # add -a for oauth, -e for node exporter

@@ -35,6 +35,18 @@ objects:
     namespace: "${NAMESPACE}"
     annotations:
       serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"prometheus"}}'
+# Create a service account for accessing prometheus data
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: prometheus-reader
+    namespace: "${NAMESPACE}"
+# Create a service account for prometheus to use to scrape other infrastructure components
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: prometheus-scraper
+    namespace: "${NAMESPACE}"
 # Create a fully end-to-end TLS connection to the proxy
 - apiVersion: route.openshift.io/v1
   kind: Route
@@ -107,10 +119,12 @@ objects:
           args:
           - -provider=openshift
           - -https-address=:8443
+          - -http-address=
           - -email-domain=*
           - -upstream=http://localhost:9090
           - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
           - '-openshift-sar={"namespace": "${NAMESPACE}", "verb": "list", "resource": "services"}'
+          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
           - -tls-cert=/etc/tls/private/tls.crt
           - -tls-key=/etc/tls/private/tls.key
           - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
