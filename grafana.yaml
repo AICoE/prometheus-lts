@@ -480,7 +480,7 @@ objects:
 
       #################################### Basic Auth ##########################
       [auth.basic]
-      enabled = true
+      enabled = false
 
       #################################### Auth Proxy ##########################
       [auth.proxy]

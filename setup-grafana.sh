@@ -97,6 +97,11 @@ cat <<EOF >"${payload}"
 }
 EOF
 
+# can't do the stuff below, because basic auth is not configured. And if we configure it, we cannot login anymore
+# it used to work because anonymous access defaults admin
+# we should make it doable by configuring the proxy to accept bearer tokens
+exit 0
+
 # setup grafana data source
 grafana_host="${protocol}$( oc get route grafana -o jsonpath='{.spec.host}' )"
 grafana_admin_password="$( oc get secrets/grafana-admin-password -n ${prometheus_namespace} -o jsonpath --template '{.data.admin_password}' | base64 --decode )"
@@ -111,4 +116,3 @@ mv "${dashboard_file}.bak" "${dashboard_file}"
 
 #((node_exporter)) && node::exporter || echo "skip node exporter"
 
-exit 0
