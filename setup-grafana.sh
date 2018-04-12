@@ -45,10 +45,10 @@ exit 1
 }
 
 get::namespace(){
-if [ -z "$(oc projects |grep aiops)" ]; then
+if [ -z "$(oc projects |grep openshift-metrics)" ]; then
     prometheus_namespace="kube-system"
 else
-    prometheus_namespace="aiops"
+    prometheus_namespace="openshift-metrics"
 fi
 }
 
@@ -75,13 +75,10 @@ mv "${dashboard_file}.bak" "${dashboard_file}"
 [[ -n ${yaml} ]] || yaml="grafana.yaml"
 ((setoauth)) && set::oauth || echo "skip oauth"
 
-# The project is created by other method in Makefile
-# oc new-project grafana
-oc process -f "${yaml}" |oc create -f -
+oc new-project ${prometheus_namespace}
+oc process -f "${yaml}" -l app=grafana NAMESPACE=${prometheus_namespace} |oc create -f -
 oc rollout status deployment/grafana
-
-# TODO: cannot perform on remote openshift
-# oc adm policy add-role-to-user view -z grafana -n "${prometheus_namespace}"
+#oc adm policy add-role-to-user view -z grafana -n "${prometheus_namespace}"
 
 payload="$( mktemp )"
 cat <<EOF >"${payload}"
@@ -108,9 +105,9 @@ curl -k -H "Content-Type: application/json" -u admin:admin "${grafana_host}/api/
 dashboard_file="./openshift-cluster-monitoring.json"
 sed -i.bak "s/Xs/${graph_granularity}/" "${dashboard_file}"
 sed -i.bak "s/\${DS_PR}/${datasource_name}/" "${dashboard_file}"
-curl -H "Content-Type: application/json" -u admin:admin "${grafana_host}/api/dashboards/db" -X POST -d "@${dashboard_file}"
+curl -k -H "Content-Type: application/json" -u admin:admin "${grafana_host}/api/dashboards/db" -X POST -d "@${dashboard_file}"
 mv "${dashboard_file}.bak" "${dashboard_file}"
 
-((node_exporter)) && node::exporter || echo "skip node exporter"
+#((node_exporter)) && node::exporter || echo "skip node exporter"
 
 exit 0

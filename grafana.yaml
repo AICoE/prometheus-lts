@@ -21,7 +21,7 @@ parameters:
   value: ""
 - description: The namespace to instantiate heapster under. Defaults to 'grafana'.
   name: NAMESPACE
-  value: aiops
+  value: grafana
 - description: The session secret for the proxy
   name: SESSION_SECRET
   generate: expression
@@ -34,16 +34,16 @@ objects:
     namespace: "${NAMESPACE}"
     annotations:
       serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"grafana"}}'
-- apiVersion: authorization.openshift.io/v1
-  kind: ClusterRoleBinding
-  metadata:
-    name: grafana-cluster-reader
-  roleRef:
-    name: cluster-reader
-  subjects:
-  - kind: ServiceAccount
-    name: grafana
-    namespace: "${NAMESPACE}"
+#- apiVersion: authorization.openshift.io/v1
+#  kind: ClusterRoleBinding
+#  metadata:
+#    name: grafana-cluster-reader
+#  roleRef:
+#    name: cluster-reader
+#  subjects:
+#  - kind: ServiceAccount
+#    name: grafana
+#    namespace: "${NAMESPACE}"
 - apiVersion: route.openshift.io/v1
   kind: Route
   metadata:
@@ -110,13 +110,11 @@ objects:
           - containerPort: 8443
             name: web
           args:
-          - -https-address=:8443
-          - -http-address=
-          - -email-domain=*
-          - -client-id=system:serviceaccount:${NAMESPACE}:grafana
-          - -upstream=http://localhost:3000
           - -provider=openshift
-#          - '-openshift-delegate-urls={"/api/datasources": {"resource": "namespace", "verb": "get", "resourceName": "grafana", "namespace": "${NAMESPACE}"}}'
+          - -https-address=:8443
+          - -email-domain=*
+          - -upstream=http://localhost:3000
+          - -client-id=system:serviceaccount:${NAMESPACE}:grafana
           - '-openshift-sar={"namespace": "${NAMESPACE}", "verb": "list", "resource": "services"}'
           - -tls-cert=/etc/tls/private/tls.crt
           - -tls-key=/etc/tls/private/tls.key
