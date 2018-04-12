@@ -75,8 +75,8 @@ mv "${dashboard_file}.bak" "${dashboard_file}"
 [[ -n ${yaml} ]] || yaml="grafana.yaml"
 ((setoauth)) && set::oauth || echo "skip oauth"
 
-oc new-project ${prometheus_namespace}
-oc process -f "${yaml}" -l app=grafana NAMESPACE=${prometheus_namespace} |oc create -f -
+#oc new-project ${prometheus_namespace}
+oc process -f "${yaml}" -l app=grafana NAMESPACE=${prometheus_namespace} | oc create -f -
 oc rollout status deployment/grafana
 #oc adm policy add-role-to-user view -z grafana -n "${prometheus_namespace}"
 
@@ -99,13 +99,14 @@ EOF
 
 # setup grafana data source
 grafana_host="${protocol}$( oc get route grafana -o jsonpath='{.spec.host}' )"
-curl -k -H "Content-Type: application/json" -u admin:admin "${grafana_host}/api/datasources" -X POST -d "@${payload}"
+grafana_admin_password="$( oc get secrets/grafana-admin-password -n ${prometheus_namespace} -o jsonpath --template '{.data.admin_password}' | base64 --decode )"
+curl -k -H "Content-Type: application/json" -u admin:${grafana_admin_password} "${grafana_host}/api/datasources" -X POST -d "@${payload}"
 
 # deploy openshift dashboard
 dashboard_file="./openshift-cluster-monitoring.json"
 sed -i.bak "s/Xs/${graph_granularity}/" "${dashboard_file}"
 sed -i.bak "s/\${DS_PR}/${datasource_name}/" "${dashboard_file}"
-curl -k -H "Content-Type: application/json" -u admin:admin "${grafana_host}/api/dashboards/db" -X POST -d "@${dashboard_file}"
+curl -k -H "Content-Type: application/json" -u admin:${grafana_admin_password} "${grafana_host}/api/dashboards/db" -X POST -d "@${dashboard_file}"
 mv "${dashboard_file}.bak" "${dashboard_file}"
 
 #((node_exporter)) && node::exporter || echo "skip node exporter"

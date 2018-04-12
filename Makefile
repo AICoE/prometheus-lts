@@ -21,5 +21,8 @@ delete_prometheus:
 #	oc delete all,secret,sa,configmaps,rolebindings -l app=prometheus -n ${PROJECT}
 	oc delete all -l app=prometheus -n ${PROJECT}
 
-#deploy_grafana:
-#	bash ./setup-grafana.sh -n prometheus -p aiops  # add -a for oauth, -e for node exporter
+deploy_grafana:
+	oc project ${PROJECT} && ./setup-grafana.sh -n prometheus -p ${PROJECT}
+
+delete_grafana:
+	oc delete all,secret,sa,configmaps -l app=grafana -n ${PROJECT}

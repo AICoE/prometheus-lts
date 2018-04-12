@@ -26,7 +26,24 @@ parameters:
   name: SESSION_SECRET
   generate: expression
   from: "[a-zA-Z0-9]{43}"
+- description: Admin password
+  name: GRAFANA_ADMIN_PASSWORD
+  generate: expression
+  from: "[a-zA-Z0-9]{16}"
 objects:
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: grafana-data
+    labels:
+      app: grafana
+  spec:
+    storageClassName: ceph-dyn-datahub
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 5Gi
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
@@ -154,8 +171,17 @@ objects:
         - name: grafana-tls
           secret:
             secretName: grafana-tls
-        - emptyDir: {}
-          name: grafana-data
+        - name: grafana-data
+          persistentVolumeClaim:
+            claimName: grafana-data
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: grafana-admin-password
+    labels:
+      app: grafana
+  stringData:
+    admin_password: "${GRAFANA_ADMIN_PASSWORD}"
 - apiVersion: v1
   kind: ConfigMap
   metadata:
@@ -320,7 +346,7 @@ objects:
       admin_user = admin
 
       # default admin password, can be changed before first start of grafana,  or in profile settings
-      admin_password = admin
+      admin_password = ${GRAFANA_ADMIN_PASSWORD}
 
       # used for signing
       secret_key = SW2YcwTIb9zpOOhoPsMm
@@ -378,10 +404,10 @@ objects:
 
       [auth]
       # Set to true to disable (hide) the login form, useful if you use OAuth
-      disable_login_form = true
+      disable_login_form = false
 
       # Set to true to disable the signout link in the side menu. useful if you use auth.proxy
-      disable_signout_menu = true
+      disable_signout_menu = false
 
       #################################### Anonymous Auth ######################
       [auth.anonymous]
@@ -392,7 +418,7 @@ objects:
       org_name = Main Org.
 
       # specify role for unauthenticated users
-      org_role = Admin
+      org_role = Viewer
 
       #################################### Github Auth #########################
       [auth.github]
@@ -454,7 +480,7 @@ objects:
 
       #################################### Basic Auth ##########################
       [auth.basic]
-      enabled = false
+      enabled = true
 
       #################################### Auth Proxy ##########################
       [auth.proxy]

@@ -15,3 +15,11 @@ Get the influxdb password for the admin user with
 and replace {INFLUX_ADMIN_PASSWORD} in `prometheus.yaml`. 
 
 Deploy prometheus with `make deploy_prometheus`
+
+
+## Grafana
+
+We are not using the official grafana image for now, because we need a prometheus datasource configured that can
+authenticate via Bearer Token headers, see these upstream issues:  
+https://github.com/grafana/grafana/pull/10313#issuecomment-366965400
+https://github.com/openshift/openshift-ansible/issues/7735
