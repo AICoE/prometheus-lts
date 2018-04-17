@@ -1,0 +1,29 @@
+---
+# tasks file for prometheus-deployment
+ - name: "create new project"
+   shell: oc new-project {{ project }}
+   tags: create_project
+
+ - name: "deploy Influx"
+   shell: oc new-app -p STORAGE_SIZE={{ influxdb_storage }} -l app=influxdb -f ./influxdb.yaml -n {{ project }}
+   tags: deploy_influx
+
+ - name: "delete Influx"
+   shell: oc delete all,secret -l app=influxdb -n {{ project }}
+   tags: delete_influx
+
+ - name: "deploy prometheus"
+   shell: pwd & oc new-app -f ../../prometheus.yaml -p NAMESPACE={{ project }} -l app=prometheus -n {{ project }}
+   tags: deploy_prometheus
+
+ - name: "delete prometheus"
+   shell: oc delete all -l app=prometheus -n {{ project }}
+   tags: delete_prometheus
+
+ - name: "deploy grafana"
+   shell: pwd & ./setup-grafana.sh -n prometheus -p {{ project }}
+   tags: deploy_grafana
+
+ - name: "delete grafana"
+   shell: oc delete all,secret,sa,configmaps -l app=grafana -n {{ project }}
+   tags: delete_grafana

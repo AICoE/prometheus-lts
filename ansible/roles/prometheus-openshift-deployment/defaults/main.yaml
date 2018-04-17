@@ -1,0 +1,4 @@
+---
+# defaults file for prometheus-deployment
+project: "aiops-dev-prometheus-lts"
+influxdb_storage: "50Gi"
