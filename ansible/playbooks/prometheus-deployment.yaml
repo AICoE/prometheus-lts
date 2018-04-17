@@ -1,0 +1,5 @@
+---
+- name: Deploy Prometheus
+  hosts: nodes
+  roles:
+  - role: prometheus-openshift-deployment
