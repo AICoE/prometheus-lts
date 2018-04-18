@@ -34,7 +34,7 @@ virtualenv $WORKSPACE/venv
 source $WORKSPACE/venv/bin/activate
 set -ex
 cd ansible
-ansible-playbook playbooks/prometheus-deployment.yaml -vvv -i inventory --tags "delete_prometheus,deploy_prometheus" -e "kubeconfig=$KUBECONFIG spark_project=${NAMESPACE}"
+ansible-playbook playbooks/prometheus-deployment.yaml -vvv -i inventory --tags "delete_prometheus,deploy_prometheus" -e "kubeconfig=$KUBECONFIG project=${PROJECT}"
 '''
   } catch (err) {
     echo 'Exception caught, being re-thrown...'
