@@ -199,9 +199,6 @@ objects:
         scrape_interval: 1m
         kubernetes_sd_configs:
           - role: pod
-            namespaces:
-              names:
-              - 'dh-stage-message-bus'
         relabel_configs:
           - source_labels: [__meta_kubernetes_pod_container_port_name]
             action: keep
@@ -209,6 +206,29 @@ objects:
           - source_labels: [__meta_kubernetes_pod_name]
             action: replace
             target_label: kubernetes_pod_name
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+      - job_name: 'spark'
+        scrape_interval: 1m
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - action: keep
+            regex: spark-cluster
+            source_labels: [__meta_kubernetes_pod_label_oshinko_cluster]
+          - action: keep
+            regex: 7777
+            source_labels: [__meta_kubernetes_pod_container_port_number]
+          - action: replace
+            source_labels: [__meta_kubernetes_pod_label_oshinko_type]
+            target_label: spark_type
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
       remote_write:
         - url: "http://influxdb:8086/api/v1/prom/write?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"
       remote_read:
