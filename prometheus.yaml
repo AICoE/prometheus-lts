@@ -191,6 +191,10 @@ objects:
         scrape_interval: 1m
         static_configs:
           - targets: ['localhost:9090']
+      - job_name: 'influxdb_stats_exporter'
+        scrape_interval: 1m
+        static_configs:
+          - targets: ['influxdbstatsexporter:9424']
       - job_name: 'influx'
         scrape_interval: 1m
         static_configs:
@@ -209,6 +213,13 @@ objects:
           - source_labels: [__meta_kubernetes_namespace]
             action: replace
             target_label: kubernetes_namespace
+      - job_name: 'thoth'
+        scrape_interval: 1m
+        static_configs:
+          - targets:
+            - website-thoth-test-core.cloud.upshift.engineering.redhat.com
+            - api-service-thoth-test-core.cloud.upshift.engineering.redhat.com
+            - pushgateway-thoth-test-core.cloud.upshift.engineering.redhat.com
       - job_name: 'spark'
         scrape_interval: 1m
         kubernetes_sd_configs:
