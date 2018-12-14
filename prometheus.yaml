@@ -1,15 +1,13 @@
-apiVersion: v1
+apiVersion: template.openshift.io/v1
 kind: Template
 metadata:
   name: prometheus
-  labels:
-    app: prometheus
   annotations:
     "openshift.io/display-name": Prometheus
     description: |
-      A monitoring solution for an OpenShift cluster - collect and gather metrics from nodes, services, and the infrastructure. This is a tech preview feature.
-    iconClass: icon-cogs
-    tags: "monitoring,prometheus,time-series"
+      A monitoring solution for an OpenShift cluster - collect and gather metrics and alerts from nodes, services, and the infrastructure. This is a tech preview feature.
+    iconClass: fa fa-cogs
+    tags: "monitoring,prometheus, alertmanager,time-series"
 parameters:
 - description: The namespace to instantiate prometheus under. Defaults to 'kube-system'.
   name: NAMESPACE
@@ -19,40 +17,44 @@ parameters:
   value: openshift/oauth-proxy:v1.0.0
 - description: The location of the prometheus image
   name: IMAGE_PROMETHEUS
-  value: openshift/prometheus:v2.0.0-dev
+  value: openshift/prometheus:v2.2.1
+- description: The location of the alertmanager image
+  name: IMAGE_ALERTMANAGER
+  value: openshift/prometheus-alertmanager:v0.13.0
+- description: The location of alert-buffer image
+  name: IMAGE_ALERT_BUFFER
+  value: openshift/prometheus-alert-buffer:v0.0.2
 - description: The session secret for the proxy
   name: SESSION_SECRET
   generate: expression
   from: "[a-zA-Z0-9]{43}"
+
 objects:
 # Authorize the prometheus service account to read data about the cluster
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
-    labels:
-      app: prometheus
     name: prometheus
     namespace: "${NAMESPACE}"
     annotations:
-      serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"prometheus"}}'
-# Create a service account for accessing prometheus data
-- apiVersion: v1
-  kind: ServiceAccount
+      serviceaccounts.openshift.io/oauth-redirectreference.prom: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"prometheus"}}'
+      serviceaccounts.openshift.io/oauth-redirectreference.alerts: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"alerts"}}'
+      serviceaccounts.openshift.io/oauth-redirectreference.alertmanager: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"alertmanager"}}'
+- apiVersion: authorization.openshift.io/v1
+  kind: ClusterRoleBinding
   metadata:
-    name: prometheus-reader
+    name: prometheus-cluster-reader
+  roleRef:
+    name: cluster-reader
+  subjects:
+  - kind: ServiceAccount
+    name: prometheus
     namespace: "${NAMESPACE}"
-# Create a service account for prometheus to use to scrape other infrastructure components
-- apiVersion: v1
-  kind: ServiceAccount
-  metadata:
-    name: prometheus-scraper
-    namespace: "${NAMESPACE}"
-# Create a fully end-to-end TLS connection to the proxy
+
+# Create a fully end-to-end TLS connection to the prometheus proxy
 - apiVersion: route.openshift.io/v1
   kind: Route
   metadata:
-    labels:
-      app: prometheus
     name: prometheus
     namespace: "${NAMESPACE}"
   spec:
@@ -60,6 +62,7 @@ objects:
       name: prometheus
     tls:
       termination: Reencrypt
+      insecureEdgeTerminationPolicy: Redirect
 - apiVersion: v1
   kind: Service
   metadata:
@@ -68,7 +71,6 @@ objects:
       prometheus.io/scheme: https
       service.alpha.openshift.io/serving-cert-secret-name: prometheus-tls
     labels:
-      app: prometheus
       name: prometheus
     name: prometheus
     namespace: "${NAMESPACE}"
@@ -83,22 +85,96 @@ objects:
 - apiVersion: v1
   kind: Secret
   metadata:
-    labels:
-      app: prometheus
     name: prometheus-proxy
     namespace: "${NAMESPACE}"
   stringData:
     session_secret: "${SESSION_SECRET}="
-# Deploy Prometheus behind an oauth proxy
-- apiVersion: extensions/v1beta1
-  kind: Deployment
+
+# Create a fully end-to-end TLS connection to the alert proxy
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: alerts
+    namespace: "${NAMESPACE}"
+  spec:
+    to:
+      name: alerts
+    tls:
+      termination: Reencrypt
+      insecureEdgeTerminationPolicy: Redirect
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: alerts-tls
+    labels:
+      name: alerts
+    name: alerts
+    namespace: "${NAMESPACE}"
+  spec:
+    ports:
+    - name: alerts
+      port: 443
+      protocol: TCP
+      targetPort: 9443
+    selector:
+      app: prometheus
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: alerts-proxy
+    namespace: "${NAMESPACE}"
+  stringData:
+    session_secret: "${SESSION_SECRET}="
+
+# Create a fully end-to-end TLS connection to the alertmanager proxy
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: alertmanager
+    namespace: "${NAMESPACE}"
+  spec:
+    to:
+      name: alertmanager
+    tls:
+      termination: Reencrypt
+      insecureEdgeTerminationPolicy: Redirect
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: alertmanager-tls
+    labels:
+      name: alertmanager
+    name: alertmanager
+    namespace: "${NAMESPACE}"
+  spec:
+    ports:
+    - name: alertmanager
+      port: 443
+      protocol: TCP
+      targetPort: 10443
+    selector:
+      app: prometheus
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: alertmanager-proxy
+    namespace: "${NAMESPACE}"
+  stringData:
+    session_secret: "${SESSION_SECRET}="
+
+- apiVersion: apps/v1beta1
+  kind: StatefulSet
   metadata:
     labels:
       app: prometheus
     name: prometheus
     namespace: "${NAMESPACE}"
   spec:
-    replicas: 1
+    updateStrategy:
+      type: RollingUpdate
+    podManagementPolicy: Parallel
     selector:
       matchLabels:
         app: prometheus
@@ -110,7 +186,8 @@ objects:
       spec:
         serviceAccountName: prometheus
         containers:
-        - name: oauth-proxy
+        # Deploy Prometheus behind an oauth proxy
+        - name: prom-proxy
           image: ${IMAGE_PROXY}
           imagePullPolicy: IfNotPresent
           ports:
@@ -123,7 +200,9 @@ objects:
           - -email-domain=*
           - -upstream=http://localhost:9090
           - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
-          - '-openshift-sar={"namespace": "${NAMESPACE}", "verb": "list", "resource": "services"}'
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
           - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
           - -tls-cert=/etc/tls/private/tls.crt
           - -tls-key=/etc/tls/private/tls.key
@@ -132,9 +211,11 @@ objects:
           - -skip-auth-regex=^/metrics
           volumeMounts:
           - mountPath: /etc/tls/private
-            name: prometheus-tls
+            name: prometheus-tls-secret
           - mountPath: /etc/proxy/secrets
-            name: secrets
+            name: prometheus-proxy-secret
+          - mountPath: /prometheus
+            name: prometheus-data
 
         - name: prometheus
           args:
@@ -143,104 +224,214 @@ objects:
           - --web.listen-address=localhost:9090
           image: ${IMAGE_PROMETHEUS}
           imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              cpu: '1'
+              memory: 4Gi
+            requests:
+              cpu: '1'
+              memory: 4Gi
           volumeMounts:
           - mountPath: /etc/prometheus
-            name: config-volume
+            name: prometheus-config
           - mountPath: /prometheus
-            name: data-volume
+            name: prometheus-data
+
+        # Deploy alertmanager behind prometheus-alert-buffer behind an oauth proxy
+        # use http port=4190 and https port=9943 to differ from prom-proxy
+        - name: alerts-proxy
+          image: ${IMAGE_PROXY}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 9443
+            name: web
+          args:
+          - -provider=openshift
+          - -https-address=:9443
+          - -http-address=
+          - -email-domain=*
+          - -upstream=http://localhost:9099
+          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
+          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
+          - -tls-cert=/etc/tls/private/tls.crt
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: alerts-tls-secret
+          - mountPath: /etc/proxy/secrets
+            name: alerts-proxy-secrets
+
+        - name: alert-buffer
+          args:
+          - --storage-path=/alert-buffer/messages.db
+          image: ${IMAGE_ALERT_BUFFER}
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+          - mountPath: /alert-buffer
+            name: alerts-data
+          ports:
+          - containerPort: 9099
+            name: alert-buf
+
+        - name: alertmanager-proxy
+          image: ${IMAGE_PROXY}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 10443
+            name: web
+          args:
+          - -provider=openshift
+          - -https-address=:10443
+          - -http-address=
+          - -email-domain=*
+          - -upstream=http://localhost:9093
+          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
+          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
+          - -tls-cert=/etc/tls/private/tls.crt
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          - -skip-auth-regex=^/metrics
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: alertmanager-tls-secret
+          - mountPath: /etc/proxy/secrets
+            name: alertmanager-proxy-secret
+
+        - name: alertmanager
+          args:
+          - --config.file=/etc/alertmanager/alertmanager.yml
+          image: ${IMAGE_ALERTMANAGER}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 9093
+            name: web
+          volumeMounts:
+          - mountPath: /etc/alertmanager
+            name: alertmanager-config
+          - mountPath: /alertmanager
+            name: alertmanager-data
 
         restartPolicy: Always
         volumes:
-        - configMap:
+
+        - name: prometheus-config
+          configMap:
             defaultMode: 420
             name: prometheus
-          name: config-volume
-        - name: secrets
+        - name: prometheus-proxy-secret
           secret:
             secretName: prometheus-proxy
-        - name: prometheus-tls
+        - name: prometheus-tls-secret
           secret:
             secretName: prometheus-tls
-        - emptyDir: {}
-          name: data-volume
+        - name: prometheus-data
+          emptyDir: {}
+
+        - name: alertmanager-config
+          configMap:
+            defaultMode: 420
+            name: alertmanager
+        - name: alertmanager-tls-secret
+          secret:
+            secretName: alertmanager-tls  
+        - name: alertmanager-proxy-secret
+          secret:
+            secretName: alertmanager-proxy         
+
+        - name: alerts-proxy-secrets
+          secret:
+            secretName: alerts-proxy
+        - name: alerts-tls-secret
+          secret:
+            secretName: alerts-tls
+        - name: alertmanager-data
+          emptyDir: {}
+        - name: alerts-data
+          emptyDir: {}
+
 - apiVersion: v1
   kind: ConfigMap
   metadata:
-    labels:
-      app: prometheus
     name: prometheus
     namespace: "${NAMESPACE}"
   data:
-    prometheus.yml: |
-      # A scrape configuration for running Prometheus on a Kubernetes cluster.
-      # This uses separate scrape configs for cluster components (i.e. API server, node)
-      # and services to allow each to use different authentication configs.
-      #
-      # Kubernetes labels will be added as Prometheus labels on metrics via the
-      # `labelmap` relabeling action.
+    alerting.rules: |
+      groups:
+      - name: example-rules
+        interval: 30s # defaults to global interval
+        rules:
+        - alert: Node Down
+          expr: up{job="kubernetes-nodes"} == 0
+          annotations:
+            miqTarget: "ContainerNode"
+            severity: "HIGH"
+            message: "{{$labels.instance}} is down"
+    
+    recording.rules: |
+      groups:
+      - name: aggregate_container_resources
+        rules:
+        - record: container_cpu_usage_rate
+          expr: sum without (cpu) (rate(container_cpu_usage_seconds_total[5m]))
+        - record: container_memory_rss_by_type
+          expr: container_memory_rss{id=~"/|/system.slice|/kubepods.slice"} > 0
+        - record: container_cpu_usage_percent_by_host
+          expr: sum by (hostname,type)(rate(container_cpu_usage_seconds_total{id="/"}[5m])) / on (hostname,type) machine_cpu_cores
+        - record: apiserver_request_count_rate_by_resources
+          expr: sum without (client,instance,contentType) (rate(apiserver_request_count[5m]))
 
-      # Scrape config for API servers.
-      #
-      # Kubernetes exposes API servers as endpoints to the default/kubernetes
-      # service so this uses `endpoints` role and uses relabelling to only keep
-      # the endpoints associated with the default/kubernetes service using the
-      # default named port `https`. This works for single API server deployments as
-      # well as HA API server deployments.
+    prometheus.yml: |
+      rule_files:
+        - '*.rules'
       scrape_configs:
       - job_name: 'prometheus'
         scrape_interval: 1m
         static_configs:
           - targets: ['localhost:9090']
-      - job_name: 'influxdb_stats_exporter'
-        scrape_interval: 1m
-        static_configs:
-          - targets: ['influxdbstatsexporter:9424']
-      - job_name: 'influx'
-        scrape_interval: 1m
-        static_configs:
-          - targets: ['influxdb:8086']
-      - job_name: 'kafka'
-        scrape_interval: 1m
-        kubernetes_sd_configs:
-          - role: pod
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_container_port_name]
-            action: keep
-            regex: kafkametrics.*
-          - source_labels: [__meta_kubernetes_pod_name]
-            action: replace
-            target_label: kubernetes_pod_name
-          - source_labels: [__meta_kubernetes_namespace]
-            action: replace
-            target_label: kubernetes_namespace
-      - job_name: 'thoth'
-        scrape_interval: 1m
-        static_configs:
-          - targets:
-            - website-thoth-test-core.cloud.upshift.engineering.redhat.com
-            - api-service-thoth-test-core.cloud.upshift.engineering.redhat.com
-            - pushgateway-thoth-test-core.cloud.upshift.engineering.redhat.com
-      - job_name: 'spark'
-        scrape_interval: 1m
-        kubernetes_sd_configs:
-          - role: pod
-        relabel_configs:
-          - action: keep
-            regex: spark-cluster
-            source_labels: [__meta_kubernetes_pod_label_oshinko_cluster]
-          - action: keep
-            regex: 7777
-            source_labels: [__meta_kubernetes_pod_container_port_number]
-          - action: replace
-            source_labels: [__meta_kubernetes_pod_label_oshinko_type]
-            target_label: spark_type
-          - source_labels: [__meta_kubernetes_pod_name]
-            action: replace
-            target_label: kubernetes_pod_name
-          - source_labels: [__meta_kubernetes_namespace]
-            action: replace
-            target_label: kubernetes_namespace
       remote_write:
         - url: "http://influxdb:8086/api/v1/prom/write?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"
       remote_read:
         - url: "http://influxdb:8086/api/v1/prom/read?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"
+      alerting:
+        alertmanagers:
+        - scheme: http
+          static_configs:
+          - targets:
+            - "localhost:9093"
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: alertmanager
+    namespace: "${NAMESPACE}"
+  data:
+    alertmanager.yml: |
+      global:
+
+      # The root route on which each incoming alert enters.
+      route:
+        # default route if none match
+        receiver: alert-buffer-wh
+
+        # The labels by which incoming alerts are grouped together. For example,
+        # multiple alerts coming in for cluster=A and alertname=LatencyHigh would
+        # be batched into a single group.
+        # TODO:
+        group_by: []
+
+        # All the above attributes are inherited by all child routes and can
+        # overwritten on each.
+
+      receivers:
+      - name: alert-buffer-wh
+        webhook_configs:
+        - url: http://localhost:9099/topics/alerts
