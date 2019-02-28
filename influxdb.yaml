@@ -3,6 +3,9 @@ kind: Template
 metadata:
   name: influxdb
 parameters:
+- description: The location of influxdb image
+  name: IMAGE_INFLUXDB
+  value: influxdb:1.7
 - name: STORAGE_SIZE
   value: 10Gi
   description: The size of the persistent storage for Influxdb
@@ -10,6 +13,12 @@ parameters:
   name: ADMIN_PASSWORD
   generate: expression
   from: "[a-zA-Z0-9]{43}"
+- description: Name of storage class
+  name: STORAGE_CLASS_NAME
+  value: ceph-dyn-datahub
+- description: Memory Limit
+  name: LIMIT_MEMORY
+  value: 2Gi
 objects:
 - apiVersion: v1
   kind: PersistentVolumeClaim
@@ -18,7 +27,7 @@ objects:
     labels:
       app: influxdb
   spec:
-    storageClassName: ceph-dyn-datahub
+    storageClassName: ${STORAGE_CLASS_NAME}
     accessModes:
       - ReadWriteOnce
     resources:
@@ -27,7 +36,7 @@ objects:
 - apiVersion: v1
   kind: Secret
   metadata:
-    name: admin-password
+    name: influxdb-admin-password
     labels:
       app: influxdb
   stringData:
@@ -75,6 +84,8 @@ objects:
   kind: DeploymentConfig
   metadata:
     name: influxdb
+    labels:
+      app: influxdb
   spec:
     replicas: 1
     selector:
@@ -91,12 +102,11 @@ objects:
         updatePeriodSeconds: 1
     template:
       metadata:
-        creationTimestamp: null
         labels:
           app: influxdb
       spec:
         containers:
-        - image: influxdb
+        - image: ${IMAGE_INFLUXDB}
           env:
             - name: INFLUXDB_DB
               value: 'prometheus'
@@ -114,17 +124,13 @@ objects:
               value: '0'
           imagePullPolicy: Always
           name: influxdb
-          tag: 1.5.1
           ports:
           - containerPort: 8086
             protocol: TCP
           resources:
             limits:
-              cpu: '4'
-              memory: 32Gi
-            requests:
-              cpu: '2'
-              memory: 8Gi
+              cpu: '1'
+              memory: ${LIMIT_MEMORY}
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
           volumeMounts:
