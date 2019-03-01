@@ -2,8 +2,7 @@
 
 set -x
 datasource_name=prometheus
-prometheus_namespace=aiops-prod-prometheus-lts
-prometheus_namespace=kube-system
+prometheus_namespace=aiops-dev-prometheus-lts
 sa_reader=prometheus
 protocol=https://
 

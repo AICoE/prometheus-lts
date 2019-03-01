@@ -2,7 +2,7 @@
 
 set -x
 datasource_name=thanos
-prometheus_namespace=aiops-prod-prometheus-lts
+prometheus_namespace=aiops-dev-prometheus-lts
 sa_reader=prometheus
 protocol=https://
 
