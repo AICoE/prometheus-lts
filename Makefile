@@ -15,7 +15,7 @@ apply_influx:
 		-p STORAGE_SIZE="${INFLUXDB_STORAGE}" \
 		-p LIMIT_MEMORY=${INFLUXDB_LIMIT_MEMORY} \
 		-p ADMIN_PASSWORD=${INFLUXDB_ADMIN_PASSWORD} \
-		-p STORAGE_CLASS_NAME=${INFLUXDB_STORAGE_CLASS_NAME} \
+		-p STORAGE_CLASS_NAME=${STORAGE_CLASS_NAME} \
 		-f ./influxdb.yaml -n ${PROJECT} | oc apply -f -
 
 delete_influx:
@@ -46,11 +46,17 @@ delete_prometheus:
 		-p PROM_FEDERATE_BEARER=${PROM_FEDERATE_BEARER} \
 		-f ./prometheus.yaml -n ${PROJECT} | oc delete -f -
 
-deploy_grafana:
-	oc project ${PROJECT} && ./setup-grafana.sh -n prometheus -p ${PROJECT}
+apply_grafana:
+	oc process \
+		-p NAMESPACE=${PROJECT} \
+		-p STORAGE_CLASS_NAME=${STORAGE_CLASS_NAME} \
+		-f ./grafana.yaml -n ${PROJECT} | oc apply -f -
 
 delete_grafana:
-	oc delete all,secret,sa,configmaps,pvc -l app=grafana -n ${PROJECT}
+	oc process \
+		-p NAMESPACE=${PROJECT} \
+		-p STORAGE_CLASS_NAME=${STORAGE_CLASS_NAME} \
+		-f ./grafana.yaml -n ${PROJECT} | oc delete -f -
 
 deploy_influxdb_stats_exporter:
 	oc new-app carlpett/influxdb_stats_exporter -l app=influxdb_stats_exporter -e INFLUX_URL=http://influxdb:8086 -e INFLUX_USER=admin -e INFLUX_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}

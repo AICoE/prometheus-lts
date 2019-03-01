@@ -26,6 +26,9 @@ parameters:
   name: SESSION_SECRET
   generate: expression
   from: "[a-zA-Z0-9]{43}"
+- description: Name of storage class
+  name: STORAGE_CLASS_NAME
+  value: ceph-dyn-datahub
 - description: Admin password
   name: GRAFANA_ADMIN_PASSWORD
   generate: expression
@@ -38,12 +41,12 @@ objects:
     labels:
       app: grafana
   spec:
-    storageClassName: ceph-dyn-datahub
+    storageClassName: ${STORAGE_CLASS_NAME}
     accessModes:
       - ReadWriteOnce
     resources:
       requests:
-        storage: 5Gi
+        storage: 1Gi
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
@@ -150,7 +153,7 @@ objects:
           - name: grafana-http
             containerPort: 3000
           volumeMounts:
-          - mountPath: "/root/go/src/github.com/grafana/grafana/data"
+          - mountPath: "/var/lib/grafana"
             name: grafana-data
           - mountPath: "/root/go/src/github.com/grafana/grafana/conf"
             name: grafanaconfig
@@ -204,7 +207,7 @@ objects:
       [paths]
       # Path to where grafana can store temp files, sessions, and the sqlite3 db (if that is used)
       #
-      data = data
+      data = /var/lib/grafana/data
       #
       # Directory where grafana can store logs
       #
