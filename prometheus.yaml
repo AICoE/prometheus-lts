@@ -3,11 +3,10 @@ kind: Template
 metadata:
   name: prometheus
   annotations:
-    "openshift.io/display-name": Prometheus
-    description: |
-      A monitoring solution for an OpenShift cluster - collect and gather metrics and alerts from nodes, services, and the infrastructure. This is a tech preview feature.
+    "openshift.io/display-name": Prometheus with thanos, no alerts
+    description: Federate another prometheus and store away with thanos
     iconClass: fa fa-cogs
-    tags: "monitoring,prometheus, alertmanager,time-series"
+    tags: "monitoring, prometheus, time-series"
 parameters:
 - description: The namespace to instantiate prometheus under. Defaults to 'kube-system'.
   name: NAMESPACE
@@ -17,29 +16,42 @@ parameters:
   value: openshift/oauth-proxy:v1.0.0
 - description: The location of the prometheus image
   name: IMAGE_PROMETHEUS
-  value: openshift/prometheus:v2.2.1
-- description: The location of the alertmanager image
-  name: IMAGE_ALERTMANAGER
-  value: openshift/prometheus-alertmanager:v0.13.0
-- description: The location of alert-buffer image
-  name: IMAGE_ALERT_BUFFER
-  value: openshift/prometheus-alert-buffer:v0.0.2
+  value: openshift/prometheus:v2.3.2
+- description: The location of thanos image
+  name: IMAGE_THANOS
+  value: improbable/thanos:v0.2.0-lazy-postings
+- description: S3 Access Key
+  name: THANOS_ACCESS_KEY
+  required: true
+- description: S3 Secret Key
+  name: THANOS_SECRET_KEY
+  required: true
+- description: S3 Bucket
+  name: THANOS_BUCKET
+  required: true
+- description: S3 Endpoint
+  name: THANOS_ENDPOINT
+  value: s3.upshift.redhat.com:443
+  required: true
+- description: Federation target
+  name: PROM_FEDERATE_TARGET
+- description: Federation Bearer Token
+  name: PROM_FEDERATE_BEARER
 - description: The session secret for the proxy
   name: SESSION_SECRET
   generate: expression
   from: "[a-zA-Z0-9]{43}"
 
 objects:
-# Authorize the prometheus service account to read data about the cluster
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
     name: prometheus
     namespace: "${NAMESPACE}"
     annotations:
+      serviceaccounts.openshift.io/oauth-redirectreference.thanos: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"thanos-query"}}'
       serviceaccounts.openshift.io/oauth-redirectreference.prom: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"prometheus"}}'
-      serviceaccounts.openshift.io/oauth-redirectreference.alerts: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"alerts"}}'
-      serviceaccounts.openshift.io/oauth-redirectreference.alertmanager: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"alertmanager"}}'
+
 - apiVersion: authorization.openshift.io/v1
   kind: ClusterRoleBinding
   metadata:
@@ -63,6 +75,7 @@ objects:
     tls:
       termination: Reencrypt
       insecureEdgeTerminationPolicy: Redirect
+
 - apiVersion: v1
   kind: Service
   metadata:
@@ -82,6 +95,7 @@ objects:
       targetPort: 8443
     selector:
       app: prometheus
+
 - apiVersion: v1
   kind: Secret
   metadata:
@@ -90,79 +104,82 @@ objects:
   stringData:
     session_secret: "${SESSION_SECRET}="
 
-# Create a fully end-to-end TLS connection to the alert proxy
-- apiVersion: route.openshift.io/v1
-  kind: Route
-  metadata:
-    name: alerts
-    namespace: "${NAMESPACE}"
-  spec:
-    to:
-      name: alerts
-    tls:
-      termination: Reencrypt
-      insecureEdgeTerminationPolicy: Redirect
-- apiVersion: v1
-  kind: Service
-  metadata:
-    annotations:
-      service.alpha.openshift.io/serving-cert-secret-name: alerts-tls
-    labels:
-      name: alerts
-    name: alerts
-    namespace: "${NAMESPACE}"
-  spec:
-    ports:
-    - name: alerts
-      port: 443
-      protocol: TCP
-      targetPort: 9443
-    selector:
-      app: prometheus
 - apiVersion: v1
   kind: Secret
   metadata:
-    name: alerts-proxy
+    name: thanos-proxy
     namespace: "${NAMESPACE}"
   stringData:
     session_secret: "${SESSION_SECRET}="
 
-# Create a fully end-to-end TLS connection to the alertmanager proxy
-- apiVersion: route.openshift.io/v1
-  kind: Route
+- apiVersion: v1
+  kind: Service
   metadata:
-    name: alertmanager
-    namespace: "${NAMESPACE}"
+    name: thanos-sidecar
   spec:
-    to:
-      name: alertmanager
-    tls:
-      termination: Reencrypt
-      insecureEdgeTerminationPolicy: Redirect
+    ports:
+    - name: cluster
+      port: 10901
+      targetPort: grpc
+    selector:
+      app: prometheus
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-store
+    name: thanos-store
+  spec:
+    externalTrafficPolicy: Cluster
+    ports:
+    - port: 10901
+      protocol: TCP
+      targetPort: grpc
+      name: store-grpc
+    selector:
+      app: thanos-store
+    sessionAffinity: None
+    type: NodePort
+
 - apiVersion: v1
   kind: Service
   metadata:
     annotations:
-      service.alpha.openshift.io/serving-cert-secret-name: alertmanager-tls
+      prometheus.io/scrape: "true"
+      prometheus.io/scheme: https
+      service.alpha.openshift.io/serving-cert-secret-name: thanos-tls
+    namespace: "${NAMESPACE}"
     labels:
-      name: alertmanager
-    name: alertmanager
-    namespace: "${NAMESPACE}"
+      app: thanos-query
+    name: thanos-query
   spec:
+    externalTrafficPolicy: Cluster
     ports:
-    - name: alertmanager
-      port: 443
+    - port: 443
       protocol: TCP
-      targetPort: 10443
+      targetPort: 8443
+      name: thanos-query
     selector:
-      app: prometheus
-- apiVersion: v1
-  kind: Secret
+      app: thanos-query
+    sessionAffinity: None
+    type: NodePort
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
   metadata:
-    name: alertmanager-proxy
-    namespace: "${NAMESPACE}"
-  stringData:
-    session_secret: "${SESSION_SECRET}="
+    labels:
+      app: thanos-query
+    name: thanos-query
+    namespace: ${NAMESPACE}
+  spec:
+    to:
+      kind: Service
+      name: thanos-query
+    tls:
+      termination: Reencrypt
+      insecureEdgeTerminationPolicy: Redirect
 
 - apiVersion: apps/v1beta1
   kind: StatefulSet
@@ -220,6 +237,8 @@ objects:
         - name: prometheus
           args:
           - --storage.tsdb.retention=6h
+          - --storage.tsdb.min-block-duration=2h
+          - --storage.tsdb.max-block-duration=2h
           - --config.file=/etc/prometheus/prometheus.yml
           - --web.listen-address=localhost:9090
           image: ${IMAGE_PROMETHEUS}
@@ -237,88 +256,31 @@ objects:
           - mountPath: /prometheus
             name: prometheus-data
 
-        # Deploy alertmanager behind prometheus-alert-buffer behind an oauth proxy
-        # use http port=4190 and https port=9943 to differ from prom-proxy
-        - name: alerts-proxy
-          image: ${IMAGE_PROXY}
-          imagePullPolicy: IfNotPresent
-          ports:
-          - containerPort: 9443
-            name: web
+        - name: thanos-sidecar
+          image: ${IMAGE_THANOS}
           args:
-          - -provider=openshift
-          - -https-address=:9443
-          - -http-address=
-          - -email-domain=*
-          - -upstream=http://localhost:9099
-          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
-          - -openshift-ca=/etc/pki/tls/cert.pem
-          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
-          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
-          - -tls-cert=/etc/tls/private/tls.crt
-          - -tls-key=/etc/tls/private/tls.key
-          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
-          - -cookie-secret-file=/etc/proxy/secrets/session_secret
-          volumeMounts:
-          - mountPath: /etc/tls/private
-            name: alerts-tls-secret
-          - mountPath: /etc/proxy/secrets
-            name: alerts-proxy-secrets
-
-        - name: alert-buffer
-          args:
-          - --storage-path=/alert-buffer/messages.db
-          image: ${IMAGE_ALERT_BUFFER}
-          imagePullPolicy: IfNotPresent
-          volumeMounts:
-          - mountPath: /alert-buffer
-            name: alerts-data
+          - "sidecar"
+          - "--log.level=info"
+          - "--tsdb.path=/prometheus/data"
+          - "--prometheus.url=http://localhost:9090"
+          - "--cluster.address=:10900"
+          - "--grpc-address=:10901"
+          - "--http-address=:10902"
+          - "--objstore.config-file=/thanos-config-store/ceph.yml"
           ports:
-          - containerPort: 9099
-            name: alert-buf
-
-        - name: alertmanager-proxy
-          image: ${IMAGE_PROXY}
-          imagePullPolicy: IfNotPresent
-          ports:
-          - containerPort: 10443
-            name: web
-          args:
-          - -provider=openshift
-          - -https-address=:10443
-          - -http-address=
-          - -email-domain=*
-          - -upstream=http://localhost:9093
-          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
-          - -openshift-ca=/etc/pki/tls/cert.pem
-          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
-          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
-          - -tls-cert=/etc/tls/private/tls.crt
-          - -tls-key=/etc/tls/private/tls.key
-          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
-          - -cookie-secret-file=/etc/proxy/secrets/session_secret
-          - -skip-auth-regex=^/metrics
+          - name: sidecar-http
+            containerPort: 10902
+          - name: grpc
+            containerPort: 10901
+          - name: cluster
+            containerPort: 10900
           volumeMounts:
-          - mountPath: /etc/tls/private
-            name: alertmanager-tls-secret
-          - mountPath: /etc/proxy/secrets
-            name: alertmanager-proxy-secret
-
-        - name: alertmanager
-          args:
-          - --config.file=/etc/alertmanager/alertmanager.yml
-          image: ${IMAGE_ALERTMANAGER}
-          imagePullPolicy: IfNotPresent
-          ports:
-          - containerPort: 9093
-            name: web
-          volumeMounts:
-          - mountPath: /etc/alertmanager
-            name: alertmanager-config
-          - mountPath: /alertmanager
-            name: alertmanager-data
+          - mountPath: /etc/prometheus
+            name: prometheus-config
+          - mountPath: /prometheus
+            name: prometheus-data
+          - mountPath: /thanos-config-store
+            name: thanos-config-store
 
         restartPolicy: Always
         volumes:
@@ -335,28 +297,151 @@ objects:
             secretName: prometheus-tls
         - name: prometheus-data
           emptyDir: {}
-
-        - name: alertmanager-config
+        - name: thanos-config-store
           configMap:
-            defaultMode: 420
-            name: alertmanager
-        - name: alertmanager-tls-secret
-          secret:
-            secretName: alertmanager-tls  
-        - name: alertmanager-proxy-secret
-          secret:
-            secretName: alertmanager-proxy         
+            name: thanos-config-store
 
-        - name: alerts-proxy-secrets
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: thanos-query
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-query
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: thanos-query
+    template:
+      metadata:
+        labels:
+          app: thanos-query
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "10902"
+      spec:
+        serviceAccountName: prometheus
+        volumes:
+        - name: thanos-tls-secret
           secret:
-            secretName: alerts-proxy
-        - name: alerts-tls-secret
+            secretName: thanos-tls
+        - name: thanos-proxy-secret
           secret:
-            secretName: alerts-tls
-        - name: alertmanager-data
+            secretName: thanos-proxy
+        containers:
+        - name: thanos-proxy
+          image: ${IMAGE_PROXY}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8443
+            name: web
+          args:
+          - -provider=openshift
+          - -https-address=:8443
+          - -http-address=
+          - -email-domain=*
+          - -upstream=http://localhost:10902
+          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
+          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
+          - -tls-cert=/etc/tls/private/tls.crt
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          - -skip-auth-regex=^/metrics
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: thanos-tls-secret
+          - mountPath: /etc/proxy/secrets
+            name: thanos-proxy-secret
+
+        - name: thanos-query
+          image: ${IMAGE_THANOS}
+          args:
+          - "query"
+          - "--log.level=info"
+          - "--cluster.address=:10900"
+          - "--grpc-address=:10901"
+          - "--http-address=:10902"
+          - "--store=thanos-sidecar:10901"
+          - "--store=thanos-store:10901"
+          ports:
+          - name: query-http
+            containerPort: 10902
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: query-http
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: thanos-store
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-store
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: thanos-store
+    template:
+      metadata:
+        labels:
+          app: thanos-store
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "10902"
+      spec:
+        volumes:
+        - name: thanos-store
           emptyDir: {}
-        - name: alerts-data
-          emptyDir: {}
+        - name: thanos-config-store
+          configMap:
+            name: thanos-config-store
+        containers:
+        - name: thanos-store
+          image: ${IMAGE_THANOS}
+          args:
+          - "store"
+          - "--log.level=debug"
+          - "--cluster.address=:10900"
+          - "--grpc-address=:10901"
+          - "--http-address=:10902"
+          - "--objstore.config-file=/thanos-config-store/ceph.yml"
+          - "--data-dir=/thanos-store"
+          ports:
+          - name: query-http
+            containerPort: 10902
+          - name: grpc
+            containerPort: 10901
+          - name: cluster
+            containerPort: 10900
+          volumeMounts:
+          - mountPath: /thanos-store
+            name: thanos-store
+          - mountPath: /thanos-config-store
+            name: thanos-config-store
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: thanos-config-store
+    namespace: "${NAMESPACE}"
+  data:
+    ceph.yml: |-
+      type: S3
+      config:
+          endpoint: ${THANOS_ENDPOINT}
+          bucket: ${THANOS_BUCKET}
+          access_key: ${THANOS_ACCESS_KEY}
+          secret_key: ${THANOS_SECRET_KEY}
+          insecure: false
+          signature_version2: false
+          encrypt_sse: false
 
 - apiVersion: v1
   kind: ConfigMap
@@ -364,74 +449,22 @@ objects:
     name: prometheus
     namespace: "${NAMESPACE}"
   data:
-    alerting.rules: |
-      groups:
-      - name: example-rules
-        interval: 30s # defaults to global interval
-        rules:
-        - alert: Node Down
-          expr: up{job="kubernetes-nodes"} == 0
-          annotations:
-            miqTarget: "ContainerNode"
-            severity: "HIGH"
-            message: "{{$labels.instance}} is down"
-    
-    recording.rules: |
-      groups:
-      - name: aggregate_container_resources
-        rules:
-        - record: container_cpu_usage_rate
-          expr: sum without (cpu) (rate(container_cpu_usage_seconds_total[5m]))
-        - record: container_memory_rss_by_type
-          expr: container_memory_rss{id=~"/|/system.slice|/kubepods.slice"} > 0
-        - record: container_cpu_usage_percent_by_host
-          expr: sum by (hostname,type)(rate(container_cpu_usage_seconds_total{id="/"}[5m])) / on (hostname,type) machine_cpu_cores
-        - record: apiserver_request_count_rate_by_resources
-          expr: sum without (client,instance,contentType) (rate(apiserver_request_count[5m]))
-
     prometheus.yml: |
-      rule_files:
-        - '*.rules'
-      scrape_configs:
-      - job_name: 'prometheus'
-        scrape_interval: 1m
-        static_configs:
-          - targets: ['localhost:9090']
-      remote_write:
-        - url: "http://influxdb:8086/api/v1/prom/write?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"
-      remote_read:
-        - url: "http://influxdb:8086/api/v1/prom/read?u=admin&p={INFLUX_ADMIN_PASSWORD}&db=prometheus"
-      alerting:
-        alertmanagers:
-        - scheme: http
-          static_configs:
-          - targets:
-            - "localhost:9093"
-
-- apiVersion: v1
-  kind: ConfigMap
-  metadata:
-    name: alertmanager
-    namespace: "${NAMESPACE}"
-  data:
-    alertmanager.yml: |
       global:
-
-      # The root route on which each incoming alert enters.
-      route:
-        # default route if none match
-        receiver: alert-buffer-wh
-
-        # The labels by which incoming alerts are grouped together. For example,
-        # multiple alerts coming in for cluster=A and alertname=LatencyHigh would
-        # be batched into a single group.
-        # TODO:
-        group_by: []
-
-        # All the above attributes are inherited by all child routes and can
-        # overwritten on each.
-
-      receivers:
-      - name: alert-buffer-wh
-        webhook_configs:
-        - url: http://localhost:9099/topics/alerts
+        external_labels:
+          monitor: prometheus
+          replica: '$(HOSTNAME)'
+      scrape_configs:
+      - job_name: telemeter
+        honor_labels: true
+        params:
+          match[]:
+          - '{_id!=""}'
+        scrape_interval: 135s
+        scrape_timeout: 10s
+        metrics_path: /federate
+        scheme: https
+        static_configs:
+        - targets:
+          - ${PROM_FEDERATE_TARGET}
+        bearer_token: "${PROM_FEDERATE_BEARER}"

@@ -1,8 +1,7 @@
-PROJECT=aiops-dev-prometheus-lts
-INFLUXDB_STORAGE=1Gi
-INFLUXDB_LIMIT_MEMORY=2Gi
-INFLUXDB_STORAGE_CLASS_NAME=ceph-dyn-thoth-prod-core
-INFLUXDB_ADMIN_PASSWORD=my-secret-password
+ENV_FILE := .env
+include ${ENV_FILE}
+export $(shell sed 's/=.*//' ${ENV_FILE})
+export PIPENV_DOTENV_LOCATION=${ENV_FILE}
 
 .PHONY: all init
 
@@ -20,17 +19,39 @@ apply_influx:
 		-f ./influxdb.yaml -n ${PROJECT} | oc apply -f -
 
 delete_influx:
-	oc process -p STORAGE_SIZE="${INFLUXDB_STORAGE}" -l app=influxdb -f ./influxdb.yaml -n ${PROJECT} | oc delete -f -
+	oc process \
+		-p STORAGE_SIZE="${INFLUXDB_STORAGE}" \
+		-p LIMIT_MEMORY=${INFLUXDB_LIMIT_MEMORY} \
+		-p ADMIN_PASSWORD=${INFLUXDB_ADMIN_PASSWORD} \
+		-p STORAGE_CLASS_NAME=${INFLUXDB_STORAGE_CLASS_NAME} \
+		-f ./influxdb.yaml -n ${PROJECT} | oc delete -f -
 
-deploy_prometheus:
-	oc new-app -f ./prometheus.yaml -p NAMESPACE=${PROJECT} -l app=prometheus -n ${PROJECT}
+apply_prometheus:
+	oc process \
+		-p NAMESPACE=${PROJECT} \
+		-p THANOS_BUCKET=${THANOS_BUCKET} \
+		-p THANOS_ACCESS_KEY=${THANOS_ACCESS_KEY} \
+		-p THANOS_SECRET_KEY=${THANOS_SECRET_KEY} \
+		-p PROM_FEDERATE_TARGET=${PROM_FEDERATE_TARGET} \
+		-p PROM_FEDERATE_BEARER=${PROM_FEDERATE_BEARER} \
+		-f ./prometheus.yaml -n ${PROJECT} | oc apply -f -
 
 delete_prometheus:
-#	oc delete all,secret,sa,configmaps,rolebindings -l app=prometheus -n ${PROJECT}
-	oc delete all -l app=prometheus -n ${PROJECT}
+	oc process \
+		-p NAMESPACE=${PROJECT} \
+		-p THANOS_BUCKET=${THANOS_BUCKET} \
+		-p THANOS_ACCESS_KEY=${THANOS_ACCESS_KEY} \
+		-p THANOS_SECRET_KEY=${THANOS_SECRET_KEY} \
+		-p PROM_FEDERATE_TARGET=${PROM_FEDERATE_TARGET} \
+		-p PROM_FEDERATE_BEARER=${PROM_FEDERATE_BEARER} \
+		-f ./prometheus.yaml -n ${PROJECT} | oc delete -f -
 
 deploy_grafana:
 	oc project ${PROJECT} && ./setup-grafana.sh -n prometheus -p ${PROJECT}
 
 delete_grafana:
-	oc delete all,secret,sa,configmaps -l app=grafana -n ${PROJECT}
+	oc delete all,secret,sa,configmaps,pvc -l app=grafana -n ${PROJECT}
+
+deploy_influxdb_stats_exporter:
+	oc new-app carlpett/influxdb_stats_exporter -l app=influxdb_stats_exporter -e INFLUX_URL=http://influxdb:8086 -e INFLUX_USER=admin -e INFLUX_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}
+
