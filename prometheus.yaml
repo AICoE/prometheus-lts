@@ -16,10 +16,10 @@ parameters:
   value: openshift/oauth-proxy:v1.0.0
 - description: The location of the prometheus image
   name: IMAGE_PROMETHEUS
-  value: openshift/prometheus:v2.3.2
+  value: quay.io/prometheus/prometheus:v2.7.1
 - description: The location of thanos image
   name: IMAGE_THANOS
-  value: improbable/thanos:v0.2.0-lazy-postings
+  value: improbable/thanos:v0.3.1
 - description: S3 Access Key
   name: THANOS_ACCESS_KEY
   required: true
@@ -33,6 +33,18 @@ parameters:
   name: THANOS_ENDPOINT
   value: s3.upshift.redhat.com:443
   required: true
+- description: Memory Limit Prometheus
+  name: LIMIT_MEMORY_PROMETHEUS
+  value: 1Gi
+- description: Memory Limit Thanos Sidecar
+  name: LIMIT_MEMORY_THANOS_SIDECAR
+  value: 1Gi
+- description: Memory Limit Thanos Store
+  name: LIMIT_MEMORY_THANOS_STORE
+  value: 1Gi
+- description: Memory Limit Thanos Query
+  name: LIMIT_MEMORY_THANOS_QUERY
+  value: 1Gi
 - description: Federation target
   name: PROM_FEDERATE_TARGET
 - description: Federation Bearer Token
@@ -118,7 +130,7 @@ objects:
     name: thanos-sidecar
   spec:
     ports:
-    - name: cluster
+    - name: grpc
       port: 10901
       targetPort: grpc
     selector:
@@ -246,10 +258,7 @@ objects:
           resources:
             limits:
               cpu: '1'
-              memory: 4Gi
-            requests:
-              cpu: '1'
-              memory: 4Gi
+              memory: ${LIMIT_MEMORY_PROMETHEUS}
           volumeMounts:
           - mountPath: /etc/prometheus
             name: prometheus-config
@@ -263,17 +272,19 @@ objects:
           - "--log.level=info"
           - "--tsdb.path=/prometheus/data"
           - "--prometheus.url=http://localhost:9090"
-          - "--cluster.address=:10900"
+          - "--cluster.disable"
           - "--grpc-address=:10901"
           - "--http-address=:10902"
           - "--objstore.config-file=/thanos-config-store/ceph.yml"
+          resources:
+            limits:
+              cpu: '1'
+              memory: ${LIMIT_MEMORY_THANOS_SIDECAR}
           ports:
           - name: sidecar-http
             containerPort: 10902
           - name: grpc
             containerPort: 10901
-          - name: cluster
-            containerPort: 10900
           volumeMounts:
           - mountPath: /etc/prometheus
             name: prometheus-config
@@ -363,11 +374,15 @@ objects:
           args:
           - "query"
           - "--log.level=info"
-          - "--cluster.address=:10900"
+          - "--cluster.disable"
           - "--grpc-address=:10901"
           - "--http-address=:10902"
           - "--store=thanos-sidecar:10901"
           - "--store=thanos-store:10901"
+          resources:
+            limits:
+              cpu: '1'
+              memory: ${LIMIT_MEMORY_THANOS_QUERY}
           ports:
           - name: query-http
             containerPort: 10902
@@ -408,18 +423,20 @@ objects:
           args:
           - "store"
           - "--log.level=debug"
-          - "--cluster.address=:10900"
+          - "--cluster.disable"
           - "--grpc-address=:10901"
           - "--http-address=:10902"
           - "--objstore.config-file=/thanos-config-store/ceph.yml"
           - "--data-dir=/thanos-store"
+          resources:
+            limits:
+              cpu: '1'
+              memory: ${LIMIT_MEMORY_THANOS_STORE}
           ports:
           - name: query-http
             containerPort: 10902
           - name: grpc
             containerPort: 10901
-          - name: cluster
-            containerPort: 10900
           volumeMounts:
           - mountPath: /thanos-store
             name: thanos-store

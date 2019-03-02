@@ -59,14 +59,6 @@ oc adm policy add-cluster-role-to-user cluster-reader grafana
 systemctl restart atomic-openshift-master-api.service
 }
 
-# deploy node exporter
-node::exporter(){
-oc annotate ns kube-system openshift.io/node-selector= --overwrite
-sed -i.bak "s/Xs/${graph_granularity}/" "${dashboard_file}"
-sed -i.bak "s/\${DS_PR}/${datasource_name}/" "${dashboard_file}"
-curl -H "Content-Type: application/json" -u admin:admin "${grafana_host}/api/dashboards/db" -X POST -d "@./node-exporter-full-dashboard.json"
-mv "${dashboard_file}.bak" "${dashboard_file}"
-}
 
 [[ -n ${datasource_name} ]] || usage
 [[ -n ${sa_reader} ]] || sa_reader="prometheus"
