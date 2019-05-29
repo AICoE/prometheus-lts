@@ -1,0 +1,276 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: thanos-store-query
+  annotations:
+    "openshift.io/display-name": Thanos query and store component
+    description: Thanos query and store
+    iconClass: fa fa-cogs
+    tags: "monitoring, prometheus, time-series"
+parameters:
+- description: The namespace to instantiate prometheus under. Defaults to 'kube-system'.
+  name: NAMESPACE
+  value: kube-system
+- description: The location of the proxy image
+  name: IMAGE_PROXY
+  value: openshift/oauth-proxy:v1.0.0
+- description: The location of thanos image
+  name: IMAGE_THANOS
+  value: improbable/thanos:v0.3.1
+- description: S3 Access Key
+  name: THANOS_ACCESS_KEY
+  required: true
+- description: S3 Secret Key
+  name: THANOS_SECRET_KEY
+  required: true
+- description: S3 Bucket
+  name: THANOS_BUCKET
+  required: true
+- description: S3 Endpoint
+  name: THANOS_ENDPOINT
+  value: s3.upshift.redhat.com:443
+  required: true
+- description: Memory Limit Thanos Store
+  name: LIMIT_MEMORY_THANOS_STORE
+  value: 1Gi
+- description: Memory Limit Thanos Query
+  name: LIMIT_MEMORY_THANOS_QUERY
+  value: 1Gi
+- description: The session secret for the proxy
+  name: SESSION_SECRET
+  generate: expression
+  from: "[a-zA-Z0-9]{43}"
+
+objects:
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: prometheus
+    namespace: "${NAMESPACE}"
+    annotations:
+      serviceaccounts.openshift.io/oauth-redirectreference.thanos: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"thanos-query"}}'
+      serviceaccounts.openshift.io/oauth-redirectreference.prom: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"prometheus"}}'
+
+- apiVersion: authorization.openshift.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: prometheus-cluster-reader
+  roleRef:
+    name: cluster-reader
+  subjects:
+    - kind: ServiceAccount
+      name: prometheus
+      namespace: "${NAMESPACE}"
+
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: thanos-proxy
+    namespace: "${NAMESPACE}"
+  stringData:
+    session_secret: "${SESSION_SECRET}="
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-store
+    name: thanos-store
+  spec:
+    externalTrafficPolicy: Cluster
+    ports:
+    - port: 10901
+      protocol: TCP
+      targetPort: grpc
+      name: store-grpc
+    selector:
+      app: thanos-store
+    sessionAffinity: None
+    type: NodePort
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/scheme: https
+      service.alpha.openshift.io/serving-cert-secret-name: thanos-tls
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-query
+    name: thanos-query
+  spec:
+    externalTrafficPolicy: Cluster
+    ports:
+    - port: 443
+      protocol: TCP
+      targetPort: 8443
+      name: thanos-query
+    selector:
+      app: thanos-query
+    sessionAffinity: None
+    type: NodePort
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    labels:
+      app: thanos-query
+    name: thanos-query
+    namespace: ${NAMESPACE}
+  spec:
+    to:
+      kind: Service
+      name: thanos-query
+    tls:
+      termination: Reencrypt
+      insecureEdgeTerminationPolicy: Redirect
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: thanos-query
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-query
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: thanos-query
+    template:
+      metadata:
+        labels:
+          app: thanos-query
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "10902"
+      spec:
+        serviceAccountName: prometheus
+        volumes:
+        - name: thanos-tls-secret
+          secret:
+            secretName: thanos-tls
+        - name: thanos-proxy-secret
+          secret:
+            secretName: thanos-proxy
+        containers:
+        - name: thanos-proxy
+          image: ${IMAGE_PROXY}
+          imagePullPolicy: IfNotPresent
+          ports:
+          - containerPort: 8443
+            name: web
+          args:
+          - -provider=openshift
+          - -https-address=:8443
+          - -http-address=
+          - -email-domain=*
+          - -upstream=http://localhost:10902
+          - -client-id=system:serviceaccount:${NAMESPACE}:prometheus
+          - -openshift-ca=/etc/pki/tls/cert.pem
+          - -openshift-ca=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          - '-openshift-sar={"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}'
+          - '-openshift-delegate-urls={"/": {"resource": "namespaces", "verb": "get", "resourceName": "${NAMESPACE}", "namespace": "${NAMESPACE}"}}'
+          - -tls-cert=/etc/tls/private/tls.crt
+          - -tls-key=/etc/tls/private/tls.key
+          - -client-secret-file=/var/run/secrets/kubernetes.io/serviceaccount/token
+          - -cookie-secret-file=/etc/proxy/secrets/session_secret
+          - -skip-auth-regex=^/metrics
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: thanos-tls-secret
+          - mountPath: /etc/proxy/secrets
+            name: thanos-proxy-secret
+
+        - name: thanos-query
+          image: ${IMAGE_THANOS}
+          args:
+          - "query"
+          - "--log.level=debug"
+          - "--cluster.disable"
+          - "--grpc-address=:10901"
+          - "--http-address=:10902"
+          - "--store=thanos-store:10901"
+          resources:
+            limits:
+              cpu: '1'
+              memory: ${LIMIT_MEMORY_THANOS_QUERY}
+          ports:
+          - name: query-http
+            containerPort: 10902
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: query-http
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: thanos-store
+    namespace: "${NAMESPACE}"
+    labels:
+      app: thanos-store
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: thanos-store
+    template:
+      metadata:
+        labels:
+          app: thanos-store
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "10902"
+      spec:
+        volumes:
+        - name: thanos-store
+          emptyDir: {}
+        - name: thanos-config-store
+          configMap:
+            name: thanos-config-store
+        containers:
+        - name: thanos-store
+          image: ${IMAGE_THANOS}
+          args:
+          - "store"
+          - "--log.level=debug"
+          - "--cluster.disable"
+          - "--grpc-address=:10901"
+          - "--http-address=:10902"
+          - "--objstore.config-file=/thanos-config-store/ceph.yml"
+          - "--data-dir=/thanos-store"
+          resources:
+            limits:
+              cpu: '1'
+              memory: ${LIMIT_MEMORY_THANOS_STORE}
+          ports:
+          - name: query-http
+            containerPort: 10902
+          - name: grpc
+            containerPort: 10901
+          volumeMounts:
+          - mountPath: /thanos-store
+            name: thanos-store
+          - mountPath: /thanos-config-store
+            name: thanos-config-store
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: thanos-config-store
+    namespace: "${NAMESPACE}"
+  data:
+    ceph.yml: |-
+      type: S3
+      config:
+          endpoint: ${THANOS_ENDPOINT}
+          bucket: ${THANOS_BUCKET}
+          access_key: ${THANOS_ACCESS_KEY}
+          secret_key: ${THANOS_SECRET_KEY}
+          insecure: false
+          signature_version2: false
+          encrypt_sse: false
+

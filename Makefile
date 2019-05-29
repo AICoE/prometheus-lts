@@ -54,6 +54,26 @@ delete_prometheus:
 		-p PROM_FEDERATE_BEARER=${PROM_FEDERATE_BEARER} \
 		-f ./prometheus.yaml -n ${PROJECT} | oc delete -f -
 
+apply_thanos_query_store:
+	oc process \
+		-p NAMESPACE=${PROJECT} \
+		-p THANOS_BUCKET=${THANOS_BUCKET} \
+		-p THANOS_ACCESS_KEY=${THANOS_ACCESS_KEY} \
+		-p THANOS_SECRET_KEY=${THANOS_SECRET_KEY} \
+		-p LIMIT_MEMORY_THANOS_STORE=${LIMIT_MEMORY_THANOS_STORE} \
+		-p LIMIT_MEMORY_THANOS_QUERY=${LIMIT_MEMORY_THANOS_QUERY} \
+		-f ./thanos-store-query.yaml -n ${PROJECT} | oc apply -f -
+
+delete_thanos_query_store:
+	oc process \
+		-p NAMESPACE=${PROJECT} \
+		-p THANOS_BUCKET=${THANOS_BUCKET} \
+		-p THANOS_ACCESS_KEY=${THANOS_ACCESS_KEY} \
+		-p THANOS_SECRET_KEY=${THANOS_SECRET_KEY} \
+		-p LIMIT_MEMORY_THANOS_STORE=${LIMIT_MEMORY_THANOS_STORE} \
+		-p LIMIT_MEMORY_THANOS_QUERY=${LIMIT_MEMORY_THANOS_QUERY} \
+		-f ./thanos-store-query.yaml -n ${PROJECT} | oc apply -f -
+
 apply_grafana:
 	oc process \
 		-p NAMESPACE=${PROJECT} \

@@ -23,3 +23,8 @@ We are not using the official grafana image for now, because we need a prometheu
 authenticate via Bearer Token headers, see these upstream issues:  
 https://github.com/grafana/grafana/pull/10313#issuecomment-366965400
 https://github.com/openshift/openshift-ansible/issues/7735
+
+
+## Thanos
+
+`oc annotate route thanos-query --overwrite haproxy.router.openshift.io/timeout=600s` 
