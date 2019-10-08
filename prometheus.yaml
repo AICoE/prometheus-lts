@@ -248,7 +248,7 @@ objects:
 
         - name: prometheus
           args:
-          - --storage.tsdb.retention=6h
+          - --storage.tsdb.retention.time=6h
           - --storage.tsdb.min-block-duration=2h
           - --storage.tsdb.max-block-duration=2h
           - --config.file=/etc/prometheus/prometheus.yml
